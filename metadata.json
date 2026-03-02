@@ -1,0 +1,5 @@
+{
+  "name": "Multi-calendar Property Management",
+  "description": "An Airbnb-style multi-calendar dashboard to manage properties, sync iCal bookings from Airbnb, and visualize occupancy across rooms using Google Sheets as a backend.",
+  "requestFramePermissions": []
+}
