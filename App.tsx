@@ -1,5 +1,6 @@
 
-import React, { useState, useEffect, useMemo, useRef } from 'react';
+import React, { useState, useMemo } from 'react';
+import useSWR from 'swr';
 import { 
   Plus, Search, ChevronLeft, ChevronRight, ExternalLink, X, Loader2,
   Calendar as CalendarIcon, Copy, Check, Phone, MessageCircle, Info,
@@ -21,9 +22,18 @@ const WhatsAppIcon = ({ className }: { className?: string }) => (
   </svg>
 );
 
+const fetcher = async () => {
+  const data = await fetchRooms();
+  localStorage.setItem('cached_rooms', JSON.stringify(data));
+  return data;
+};
+
 const App: React.FC = () => {
-  const [rooms, setRooms] = useState<Room[]>([]);
-  const [loading, setLoading] = useState(true);
+  const { data: rooms = [], error, isLoading, mutate } = useSWR('rooms', fetcher, {
+    fallbackData: JSON.parse(localStorage.getItem('cached_rooms') || '[]'),
+    revalidateOnFocus: true,
+  });
+  
   const [currentDate, setCurrentDate] = useState(startOfDay(new Date()));
   const [filterBuilding, setFilterBuilding] = useState<string>('Tất cả');
   const [isModalOpen, setIsModalOpen] = useState(false);
@@ -32,15 +42,9 @@ const App: React.FC = () => {
   const [copiedId, setCopiedId] = useState<string | null>(null);
   const [selectedSlot, setSelectedSlot] = useState<{room: Room, date: string} | null>(null);
   const [isSidebarCollapsed, setIsSidebarCollapsed] = useState(false);
+  const [isImporting, setIsImporting] = useState(false);
 
-  useEffect(() => { loadData(); }, []);
-
-  const loadData = async () => {
-    setLoading(true);
-    const data = await fetchRooms();
-    setRooms(data);
-    setLoading(false);
-  };
+  const loading = isLoading && rooms.length === 0;
 
   const days = useMemo(() => eachDayOfInterval({
     start: currentDate,
@@ -56,8 +60,9 @@ const App: React.FC = () => {
   }), [rooms, filterBuilding, searchTerm]);
 
   const handlePriceChange = async (roomId: string, date: string, price: string) => {
-    setRooms(prev => prev.map(r => r.id === roomId ? { ...r, prices: { ...(r.prices || {}), [date]: price } } : r));
+    mutate(rooms.map(r => r.id === roomId ? { ...r, prices: { ...(r.prices || {}), [date]: price } } : r), false);
     await updateRoomPrice(roomId, date, price);
+    mutate();
   };
 
   const isDayBooked = (room: Room, day: Date) => room.bookings.some(b => {
@@ -117,14 +122,14 @@ const App: React.FC = () => {
 
       {/* Main Calendar Area */}
       <div className="flex-1 overflow-hidden flex relative">
-        {loading ? <div className="flex-1 flex items-center justify-center bg-white/50"><Loader2 className="w-8 h-8 animate-spin text-[#FF385C]" /></div> : (
-          <div className="flex h-full w-full overflow-hidden">
+        {(loading || isImporting) ? <div className="flex-1 flex items-center justify-center bg-white/50"><Loader2 className="w-8 h-8 animate-spin text-[#FF385C]" /></div> : (
+          <div className="flex h-full w-full overflow-auto no-scrollbar relative">
             {/* Sidebar Room Names */}
             <div 
               style={{ width: currentSidebarWidth }} 
-              className="flex-shrink-0 border-r bg-white z-40 shadow-[4px_0_10px_-4px_rgba(0,0,0,0.05)] transition-all duration-300 ease-in-out"
+              className="flex-shrink-0 border-r bg-white sticky left-0 z-40 shadow-[4px_0_10px_-4px_rgba(0,0,0,0.05)] transition-all duration-300 ease-in-out"
             >
-              <div className="h-16 border-b flex items-center justify-between px-3 text-[10px] font-bold text-gray-400 uppercase tracking-widest bg-gray-50/30">
+              <div className="h-16 border-b flex items-center justify-between px-3 text-[10px] font-bold text-gray-400 uppercase tracking-widest bg-gray-50 sticky top-0 z-50">
                 {!isSidebarCollapsed && <span>Danh sách</span>}
                 <button 
                   onClick={() => setIsSidebarCollapsed(!isSidebarCollapsed)} 
@@ -134,7 +139,7 @@ const App: React.FC = () => {
                   {isSidebarCollapsed ? <PanelLeftOpen className="w-4 h-4 text-gray-600" /> : <PanelLeftClose className="w-4 h-4 text-gray-600" />}
                 </button>
               </div>
-              <div className="overflow-y-auto no-scrollbar h-[calc(100%-64px)]">
+              <div className="pb-20">
                 {filteredRooms.map(room => (
                   <div key={room.id} className="h-16 border-b px-3 flex items-center hover:bg-gray-50 group transition-colors relative">
                     {/* Content Logic based on Collapsed State */}
@@ -170,8 +175,8 @@ const App: React.FC = () => {
             </div>
 
             {/* Timeline Grid */}
-            <div className="flex-1 overflow-auto no-scrollbar bg-gray-50">
-              <div style={{ width: days.length * DAY_COLUMN_WIDTH }} className="h-full relative">
+            <div className="bg-gray-50 flex-shrink-0" style={{ width: days.length * DAY_COLUMN_WIDTH }}>
+              <div className="h-full relative">
                 {/* Header Timeline */}
                 <div className="h-16 border-b bg-white flex flex-col sticky top-0 z-30 shadow-sm">
                   <div className="flex h-full">
@@ -185,8 +190,9 @@ const App: React.FC = () => {
                 </div>
 
                 {/* Grid Rows */}
-                {filteredRooms.map(room => (
-                  <div key={`row-${room.id}`} className="h-16 border-b relative flex items-center bg-white group hover:bg-gray-50/30 transition-colors">
+                <div className="pb-20">
+                  {filteredRooms.map(room => (
+                    <div key={`row-${room.id}`} className="h-16 border-b relative flex items-center bg-white group hover:bg-gray-50/30 transition-colors">
                     {days.map(day => {
                       const dateStr = format(day, 'yyyy-MM-dd');
                       const booked = isDayBooked(room, day);
@@ -231,6 +237,7 @@ const App: React.FC = () => {
                     })}
                   </div>
                 ))}
+                </div>
               </div>
             </div>
           </div>
@@ -282,24 +289,24 @@ const App: React.FC = () => {
           onClose={() => setIsCsvModalOpen(false)} 
           onImport={async (parsedRooms) => {
             setIsCsvModalOpen(false);
-            setLoading(true);
+            setIsImporting(true);
             try {
               for (const room of parsedRooms) {
                 await addRoom(room);
               }
-              await loadData();
+              await mutate();
               alert('Nhập dữ liệu thành công!');
             } catch (error) {
               console.error('Lỗi khi nhập CSV:', error);
               alert('Có lỗi xảy ra khi nhập dữ liệu.');
             } finally {
-              setLoading(false);
+              setIsImporting(false);
             }
           }} 
         />
       )}
 
-      {isModalOpen && <AddRoomModal onClose={() => setIsModalOpen(false)} onSuccess={() => { setIsModalOpen(false); loadData(); }} />}
+      {isModalOpen && <AddRoomModal onClose={() => setIsModalOpen(false)} onSuccess={() => { setIsModalOpen(false); mutate(); }} />}
     </div>
   );
 };
